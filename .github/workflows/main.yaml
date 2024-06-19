@@ -41,5 +41,23 @@ jobs:
         - name: Log into AWS ECR
           id: login-aws-ecr
           uses: aws-actions/amazon-ecr-login@v2
-        - name: Echo
-          run: echo ${{ steps.login-aws-ecr.outputs.registry }}
+        - name: Pull and Run ECR Image on EC2 Instance
+          env:
+            ECR_IMAGE_TO_DEPLOY: ${{ steps.login-aws-ecr.outputs.registry }}/${{secrets.AWS_ECR_REPO}}:latest
+            INSTANCE_ID_1: ${{secrets.INSTANCE_ID_1}}
+            INSTANCE_ID_2: ${{secrets.INSTANCE_ID_2}}
+            CONTAINER_NAME: "api"
+          run: |
+            command_id=$(aws ssm send-command \
+              --targets Key=InstanceIds,Values=${{env.INSTANCE_ID_1}},${{env.INSTANCE_ID_2}} \
+              --document-name "AWS-RunShellScript" \
+              --comment "Executing Docker operations" \
+              --parameters commands='[
+                "set -e",
+                "docker stop ${{ env.CONTAINER_NAME }} || true",
+                "aws ecr get-login-password --region eu-west-1 | docker login --username AWS --password-stdin ${{ env.ECR_IMAGE_TO_DEPLOY }}",
+                "docker pull ${{ env.ECR_IMAGE_TO_DEPLOY }}",
+                "docker run -d -p 3000:3000 --name ${{ env.CONTAINER_NAME }} ${{ env.ECR_IMAGE_TO_DEPLOY }}"
+              ]' --query 'Command.CommandId' --output text)
+
+            echo "command_id=$command_id" >> $GITHUB_ENV
